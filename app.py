@@ -600,21 +600,22 @@ class App(tk.Tk):
         col_hdrs = ['Time (s)']
         col_wids = [90]
 
+        # dot1 = bottom, dot2 = top
         if opts['track_pixel_pos']:
-            for lbl in ['Top X (px)', 'Top Y (px)', 'Bot X (px)', 'Bot Y (px)']:
+            for lbl in ['Dot1 X (px)', 'Dot1 Y (px)', 'Dot2 X (px)', 'Dot2 Y (px)']:
                 col_ids.append(lbl)
                 col_hdrs.append(lbl)
                 col_wids.append(100)
 
         if opts['track_mm_pos']:
-            for lbl in ['Top X (mm)', 'Top Y (mm)', 'Bot X (mm)', 'Bot Y (mm)']:
+            for lbl in ['Dot1 X (mm)', 'Dot1 Y (mm)', 'Dot2 X (mm)', 'Dot2 Y (mm)']:
                 col_ids.append(lbl)
                 col_hdrs.append(lbl)
                 col_wids.append(110)
 
         if opts['track_dot_disp']:
-            for lbl in [f'Top dX ({unit})', f'Top dY ({unit})',
-                        f'Bot dX ({unit})', f'Bot dY ({unit})']:
+            for lbl in [f'Dot1 dX ({unit})', f'Dot1 dY ({unit})',
+                        f'Dot2 dX ({unit})', f'Dot2 dY ({unit})']:
                 col_ids.append(lbl)
                 col_hdrs.append(lbl)
                 col_wids.append(110)
@@ -657,32 +658,33 @@ class App(tk.Tk):
             pb = positions[i][1] if i < len(positions) else None
             row = [f'{t:.4f}']
 
+            # dot1 = bottom (pb), dot2 = top (pt)
             if opts['track_pixel_pos']:
                 if pt and pb:
-                    row += [f'{pt[0]:.1f}', f'{h - pt[1]:.1f}',
-                            f'{pb[0]:.1f}', f'{h - pb[1]:.1f}']
+                    row += [f'{pb[0]:.1f}', f'{h - pb[1]:.1f}',
+                            f'{pt[0]:.1f}', f'{h - pt[1]:.1f}']
                 else:
                     row += ['', '', '', '']
 
             if opts['track_mm_pos']:
                 if pt and pb and ppm:
-                    row += [f'{pt[0]/ppm:.3f}', f'{(h - pt[1])/ppm:.3f}',
-                            f'{pb[0]/ppm:.3f}', f'{(h - pb[1])/ppm:.3f}']
+                    row += [f'{pb[0]/ppm:.3f}', f'{(h - pb[1])/ppm:.3f}',
+                            f'{pt[0]/ppm:.3f}', f'{(h - pt[1])/ppm:.3f}']
                 else:
                     row += ['', '', '', '']
 
             if opts['track_dot_disp']:
                 if pt and pb and top0 and bot0:
                     if ppm:
-                        row += [f'{(pt[0] - top0[0])/ppm:.4f}',
-                                f'{((h - pt[1]) - (h - top0[1]))/ppm:.4f}',
-                                f'{(pb[0] - bot0[0])/ppm:.4f}',
-                                f'{((h - pb[1]) - (h - bot0[1]))/ppm:.4f}']
+                        row += [f'{(pb[0] - bot0[0])/ppm:.4f}',
+                                f'{((h - pb[1]) - (h - bot0[1]))/ppm:.4f}',
+                                f'{(pt[0] - top0[0])/ppm:.4f}',
+                                f'{((h - pt[1]) - (h - top0[1]))/ppm:.4f}']
                     else:
-                        row += [f'{pt[0] - top0[0]:.2f}',
-                                f'{(h - pt[1]) - (h - top0[1]):.2f}',
-                                f'{pb[0] - bot0[0]:.2f}',
-                                f'{(h - pb[1]) - (h - bot0[1]):.2f}']
+                        row += [f'{pb[0] - bot0[0]:.2f}',
+                                f'{(h - pb[1]) - (h - bot0[1]):.2f}',
+                                f'{pt[0] - top0[0]:.2f}',
+                                f'{(h - pt[1]) - (h - top0[1]):.2f}']
                 else:
                     row += ['', '', '', '']
 

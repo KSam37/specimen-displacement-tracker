@@ -514,12 +514,12 @@ class VideoTracker:
         # Build header
         header = ['time_s']
         if track_pixel_pos:
-            header += ['top_x_px', 'top_y_px', 'bot_x_px', 'bot_y_px']
+            header += ['dot1_x_px', 'dot1_y_px', 'dot2_x_px', 'dot2_y_px']
         if track_mm_pos:
-            header += ['top_x_mm', 'top_y_mm', 'bot_x_mm', 'bot_y_mm']
+            header += ['dot1_x_mm', 'dot1_y_mm', 'dot2_x_mm', 'dot2_y_mm']
         if track_dot_disp:
-            header += [f'top_dx_{unit}', f'top_dy_{unit}',
-                       f'bot_dx_{unit}', f'bot_dy_{unit}']
+            header += [f'dot1_dx_{unit}', f'dot1_dy_{unit}',
+                       f'dot2_dx_{unit}', f'dot2_dy_{unit}']
         if track_interdot_disp:
             header.append(f'displacement_{unit}')
         if track_interdot_dist:
@@ -533,32 +533,33 @@ class VideoTracker:
                 pb = positions[i][1] if i < len(positions) else None
                 row = [f'{t:.4f}']
 
+                # dot1 = bottom (pb), dot2 = top (pt)
                 if track_pixel_pos:
                     if pt is not None and pb is not None:
-                        row += [f'{pt[0]:.2f}', f'{h - pt[1]:.2f}',
-                                f'{pb[0]:.2f}', f'{h - pb[1]:.2f}']
+                        row += [f'{pb[0]:.2f}', f'{h - pb[1]:.2f}',
+                                f'{pt[0]:.2f}', f'{h - pt[1]:.2f}']
                     else:
                         row += ['', '', '', '']
 
                 if track_mm_pos:
                     if pt is not None and pb is not None and ppm:
-                        row += [f'{pt[0]/ppm:.4f}', f'{(h - pt[1])/ppm:.4f}',
-                                f'{pb[0]/ppm:.4f}', f'{(h - pb[1])/ppm:.4f}']
+                        row += [f'{pb[0]/ppm:.4f}', f'{(h - pb[1])/ppm:.4f}',
+                                f'{pt[0]/ppm:.4f}', f'{(h - pt[1])/ppm:.4f}']
                     else:
                         row += ['', '', '', '']
 
                 if track_dot_disp:
                     if pt is not None and pb is not None and top0 is not None and bot0 is not None:
                         if ppm:
-                            row += [f'{(pt[0] - top0[0])/ppm:.4f}',
-                                    f'{((h - pt[1]) - (h - top0[1]))/ppm:.4f}',
-                                    f'{(pb[0] - bot0[0])/ppm:.4f}',
-                                    f'{((h - pb[1]) - (h - bot0[1]))/ppm:.4f}']
+                            row += [f'{(pb[0] - bot0[0])/ppm:.4f}',
+                                    f'{((h - pb[1]) - (h - bot0[1]))/ppm:.4f}',
+                                    f'{(pt[0] - top0[0])/ppm:.4f}',
+                                    f'{((h - pt[1]) - (h - top0[1]))/ppm:.4f}']
                         else:
-                            row += [f'{pt[0] - top0[0]:.2f}',
-                                    f'{(h - pt[1]) - (h - top0[1]):.2f}',
-                                    f'{pb[0] - bot0[0]:.2f}',
-                                    f'{(h - pb[1]) - (h - bot0[1]):.2f}']
+                            row += [f'{pb[0] - bot0[0]:.2f}',
+                                    f'{(h - pb[1]) - (h - bot0[1]):.2f}',
+                                    f'{pt[0] - top0[0]:.2f}',
+                                    f'{(h - pt[1]) - (h - top0[1]):.2f}']
                     else:
                         row += ['', '', '', '']
 
