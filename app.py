@@ -80,11 +80,11 @@ class App(tk.Tk):
         self._scrub_blocked = False
 
         # Tracking option flags (set before running)
-        self.track_pixel_pos    = tk.BooleanVar(value=False)
-        self.track_mm_pos       = tk.BooleanVar(value=False)
-        self.track_dot_disp     = tk.BooleanVar(value=False)
+        self.track_pixel_pos    = tk.BooleanVar(value=True)
+        self.track_mm_pos       = tk.BooleanVar(value=True)
+        self.track_dot_disp     = tk.BooleanVar(value=True)
         self.track_interdot_disp = tk.BooleanVar(value=True)
-        self.track_interdot_dist = tk.BooleanVar(value=False)
+        self.track_interdot_dist = tk.BooleanVar(value=True)
 
         # Plot axis selection (dropdown values)
         self.plot_x_var = tk.StringVar(value='Time (s)')
