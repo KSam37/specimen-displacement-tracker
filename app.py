@@ -75,6 +75,7 @@ class App(tk.Tk):
         # Review state
         self._review_cap = None         # cv2.VideoCapture for scrubbing
         self._review_idx = None         # which video index we're reviewing
+        self._results_idx = None        # last video whose results are shown in Data/Plot tabs
         self._playing = False
         self._play_after_id = None
         self._scrub_blocked = False
@@ -255,6 +256,9 @@ class App(tk.Tk):
         self.plot_y_combo.pack(side="left", padx=(0, 12))
         self.plot_y_combo.bind("<<ComboboxSelected>>", self._on_plot_axis_change)
 
+        ttk.Button(plot_ctrl, text="↺ Refresh",
+                   command=self._on_plot_axis_change).pack(side="left", padx=(0, 8))
+
         ttk.Button(plot_ctrl, text="Copy",
                    command=self._copy_plot).pack(side="right", padx=2)
         ttk.Button(plot_ctrl, text="Save as...",
@@ -428,6 +432,7 @@ class App(tk.Tk):
         self._play_after_id = self.after(delay, self._play_step)
 
     def _show_results_tabs(self, idx):
+        self._results_idx = idx
         has_cleaned = idx in self.cleaned_data
         self._show_data_table(idx, cleaned=has_cleaned)
         self._show_plot(idx, cleaned=has_cleaned)
@@ -621,6 +626,7 @@ class App(tk.Tk):
         self.clean_label.configure(
             text=f"Removed {n_removed} outliers ({removed_pct:.1f}%)")
 
+        self._results_idx = idx
         self._show_data_table(idx, cleaned=True)
         self._show_plot(idx, cleaned=True)
 
@@ -840,8 +846,10 @@ class App(tk.Tk):
     def _on_plot_axis_change(self, _event=None):
         if self._plot_suspend:
             return
-        idx, _ = self._get_selected_tracker()
-        if idx is None:
+        # Use the last video whose results were displayed — the listbox may
+        # have lost selection when the combobox was clicked.
+        idx = self._results_idx
+        if idx is None or idx not in self.trackers:
             return
         self._show_plot(idx, cleaned=(idx in self.cleaned_data))
 
