@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 import csv
 import threading
 import queue
+from io import BytesIO
 from pathlib import Path
 import matplotlib
 matplotlib.use("TkAgg")
@@ -84,6 +85,11 @@ class App(tk.Tk):
         self.track_dot_disp     = tk.BooleanVar(value=False)
         self.track_interdot_disp = tk.BooleanVar(value=True)
         self.track_interdot_dist = tk.BooleanVar(value=False)
+
+        # Plot axis selection (dropdown values)
+        self.plot_x_var = tk.StringVar(value='Time (s)')
+        self.plot_y_var = tk.StringVar(value='')
+        self._plot_suspend = False  # block combobox callbacks during programmatic set
 
         self._build_ui()
         self._poll_queue()
@@ -230,6 +236,29 @@ class App(tk.Tk):
         # Tab 3: Plot
         self.plot_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.plot_tab, text="  Plot  ")
+
+        # Control row: X/Y dropdowns + export buttons
+        plot_ctrl = ttk.Frame(self.plot_tab, padding=(4, 4))
+        plot_ctrl.pack(fill="x")
+
+        ttk.Label(plot_ctrl, text="X:").pack(side="left", padx=(4, 2))
+        self.plot_x_combo = ttk.Combobox(
+            plot_ctrl, textvariable=self.plot_x_var,
+            state="readonly", width=28, values=[])
+        self.plot_x_combo.pack(side="left", padx=(0, 12))
+        self.plot_x_combo.bind("<<ComboboxSelected>>", self._on_plot_axis_change)
+
+        ttk.Label(plot_ctrl, text="Y:").pack(side="left", padx=(0, 2))
+        self.plot_y_combo = ttk.Combobox(
+            plot_ctrl, textvariable=self.plot_y_var,
+            state="readonly", width=28, values=[])
+        self.plot_y_combo.pack(side="left", padx=(0, 12))
+        self.plot_y_combo.bind("<<ComboboxSelected>>", self._on_plot_axis_change)
+
+        ttk.Button(plot_ctrl, text="Copy",
+                   command=self._copy_plot).pack(side="right", padx=2)
+        ttk.Button(plot_ctrl, text="Save as...",
+                   command=self._save_plot).pack(side="right", padx=2)
 
         self.fig = Figure(figsize=(7, 4), dpi=100)
         self.ax = self.fig.add_subplot(111)
@@ -709,74 +738,232 @@ class App(tk.Tk):
             self.tree.insert('', 'end', values=row)
 
     # --------------------------------------------------------- Plot
+    def _variable_labels(self, tracker):
+        """List of selectable plot variables available for this tracker."""
+        labels = ['Time (s)']
+        n = tracker.n_dots
+        unit = tracker.unit
+        has_mm = tracker.px_per_mm is not None
+
+        for i in range(1, n + 1):
+            labels += [f'Dot{i} X (px)', f'Dot{i} Y (px)']
+        if has_mm:
+            for i in range(1, n + 1):
+                labels += [f'Dot{i} X (mm)', f'Dot{i} Y (mm)']
+        for i in range(1, n + 1):
+            labels += [f'Dot{i} dX ({unit})', f'Dot{i} dY ({unit})']
+        if n >= 2:
+            labels.append(f'Inter-dot displacement ({unit})')
+            labels.append(f'Inter-dot distance ({unit})')
+        return labels
+
+    def _default_y_label(self, tracker):
+        """Sensible default Y variable for this tracker."""
+        unit = tracker.unit
+        if tracker.n_dots >= 2:
+            return f'Inter-dot displacement ({unit})'
+        return f'Dot1 dY ({unit})'
+
+    def _compute_var(self, tracker, label, results, positions):
+        """Return a numpy array of values for `label` over the given rows."""
+        h = tracker.height
+        ppm = tracker.px_per_mm
+        n = tracker.n_dots
+        ref = (tracker.positions[0]
+               if tracker.positions else [None] * n)
+
+        if label == 'Time (s)':
+            return np.array([r[0] for r in results], dtype=float)
+
+        if label.startswith('Inter-dot displacement'):
+            d0 = (results[0][1] if (results and results[0][1] is not None)
+                  else 0.0)
+            return np.array(
+                [r[1] - d0 if r[1] is not None else np.nan for r in results],
+                dtype=float)
+        if label.startswith('Inter-dot distance'):
+            return np.array(
+                [r[1] if r[1] is not None else np.nan for r in results],
+                dtype=float)
+
+        # Dot-indexed: 'Dot1 X (px)', 'Dot2 dY (mm)', etc.
+        if label.startswith('Dot'):
+            space = label.index(' ')
+            i = int(label[3:space]) - 1
+            rest = label[space + 1:]
+            ref_p = (ref[i] if (0 <= i < len(ref) and ref[i] is not None)
+                     else None)
+
+            out = np.full(len(positions), np.nan, dtype=float)
+            for k, pts in enumerate(positions):
+                p = pts[i] if (pts and i < len(pts) and pts[i] is not None) \
+                    else None
+                if p is None:
+                    continue
+                if rest == 'X (px)':
+                    out[k] = p[0]
+                elif rest == 'Y (px)':
+                    out[k] = h - p[1]
+                elif rest == 'X (mm)' and ppm:
+                    out[k] = p[0] / ppm
+                elif rest == 'Y (mm)' and ppm:
+                    out[k] = (h - p[1]) / ppm
+                elif rest.startswith('dX') and ref_p is not None:
+                    v = p[0] - ref_p[0]
+                    out[k] = v / ppm if ('(mm)' in rest and ppm) else v
+                elif rest.startswith('dY') and ref_p is not None:
+                    v = (h - p[1]) - (h - ref_p[1])
+                    out[k] = v / ppm if ('(mm)' in rest and ppm) else v
+            return out
+
+        return np.full(len(positions), np.nan, dtype=float)
+
+    def _refresh_plot_controls(self, idx):
+        """Populate X/Y dropdown values for the selected video."""
+        tracker = self.trackers.get(idx)
+        if tracker is None:
+            return
+        labels = self._variable_labels(tracker)
+        default_y = self._default_y_label(tracker)
+        if default_y not in labels:
+            default_y = labels[1] if len(labels) > 1 else labels[0]
+
+        self._plot_suspend = True
+        self.plot_x_combo['values'] = labels
+        self.plot_y_combo['values'] = labels
+        if self.plot_x_var.get() not in labels:
+            self.plot_x_var.set('Time (s)')
+        if self.plot_y_var.get() not in labels:
+            self.plot_y_var.set(default_y)
+        self._plot_suspend = False
+
+    def _on_plot_axis_change(self, _event=None):
+        if self._plot_suspend:
+            return
+        idx, _ = self._get_selected_tracker()
+        if idx is None:
+            return
+        self._show_plot(idx, cleaned=(idx in self.cleaned_data))
+
     def _show_plot(self, idx, cleaned=False):
         tracker = self.trackers.get(idx)
         if tracker is None:
             return
+
+        # Make sure dropdown values are valid for this tracker
+        self._refresh_plot_controls(idx)
+
+        x_label = self.plot_x_var.get()
+        y_label = self.plot_y_var.get()
+
         self.ax.clear()
-        opts = self._get_track_opts()
-        n = tracker.n_dots
-        h = tracker.height
-        ppm = tracker.px_per_mm
 
-        get_y_raw = None   # function: data (list of (t, d)) -> y values
-        get_y_pos = None   # function: positions (list of lists) -> y values
-
-        # Prefer inter-dot metrics when we actually have 2+ dots
-        if n >= 2 and opts['track_interdot_disp']:
-            y_label = f'Displacement ({tracker.unit})'
-            def get_y_raw(data):
-                d0 = data[0][1] if data else 0
-                return [r[1] - d0 for r in data]
-        elif n >= 2 and opts['track_interdot_dist']:
-            y_label = f'Distance ({tracker.unit})'
-            def get_y_raw(data):
-                return [r[1] for r in data]
-        else:
-            # 1-dot case (or no inter-dot option enabled):
-            # plot dot1 y-displacement (bottom-left origin)
-            def _pos_y_disp(positions):
-                if not positions:
-                    return []
-                ref = positions[0][0] if positions[0] else None
-                y0 = (h - ref[1]) if ref is not None else 0.0
-                out = []
-                for pts in positions:
-                    p = pts[0] if pts else None
-                    if p is None:
-                        out.append(np.nan)
-                    else:
-                        yv = (h - p[1]) - y0
-                        out.append(yv / ppm if ppm else yv)
-                return out
-            get_y_pos = _pos_y_disp
-            y_label = f'Dot1 Y displacement ({tracker.unit})'
-
-        raw_t = [r[0] for r in tracker.results]
-        if get_y_raw is not None:
-            raw_y = get_y_raw(tracker.results)
-        else:
-            raw_y = get_y_pos(tracker.positions)
+        raw_x = self._compute_var(tracker, x_label,
+                                  tracker.results, tracker.positions)
+        raw_y = self._compute_var(tracker, y_label,
+                                  tracker.results, tracker.positions)
 
         if cleaned and idx in self.cleaned_data:
             cd = self.cleaned_data[idx]
-            clean_t = [r[0] for r in cd['results']]
-            if get_y_raw is not None:
-                clean_y = get_y_raw(cd['results'])
-            else:
-                clean_y = get_y_pos(cd['positions'])
-            self.ax.plot(raw_t, raw_y, linewidth=0.8, color="#cccccc", label="Raw", zorder=1)
-            self.ax.plot(clean_t, clean_y, linewidth=1.2, color="#2563eb", label="Cleaned", zorder=2)
-            self.ax.legend(loc="upper left", fontsize=9)
+            cx = self._compute_var(tracker, x_label, cd['results'], cd['positions'])
+            cy = self._compute_var(tracker, y_label, cd['results'], cd['positions'])
+            self.ax.plot(raw_x, raw_y, linewidth=0.8, color="#cccccc",
+                         label="Raw", zorder=1)
+            self.ax.plot(cx, cy, linewidth=1.2, color="#2563eb",
+                         label="Cleaned", zorder=2)
+            self.ax.legend(loc="best", fontsize=9)
         else:
-            self.ax.plot(raw_t, raw_y, linewidth=1.2, color="#2563eb")
+            self.ax.plot(raw_x, raw_y, linewidth=1.2, color="#2563eb")
 
-        self.ax.set_xlabel("Time (s)")
+        self.ax.set_xlabel(x_label)
         self.ax.set_ylabel(y_label)
         self.ax.set_title(self.video_files[idx].name)
         self.ax.grid(True, alpha=0.3)
         self.fig.tight_layout()
         self.plot_canvas.draw()
+
+    # --------------------------------------------------------- Plot export
+    def _plot_filename_stem(self):
+        idx, _ = self._get_selected_tracker()
+        if idx is None:
+            return "plot"
+        stem = self.video_files[idx].stem
+        y = self.plot_y_var.get() or "plot"
+        # sanitise for filename
+        y_clean = y.replace('/', '_').replace('\\', '_')
+        return f"{stem} — {y_clean}"
+
+    def _save_plot(self):
+        idx, _ = self._get_selected_tracker()
+        if idx is None:
+            messagebox.showinfo("Info", "Select a completed video first.")
+            return
+        stem = self._plot_filename_stem()
+        path = filedialog.asksaveasfilename(
+            title="Save plot image",
+            initialdir=str(OUTPUT_DIR),
+            initialfile=f"{stem}.png",
+            defaultextension=".png",
+            filetypes=[("PNG image", "*.png"),
+                       ("PDF", "*.pdf"),
+                       ("SVG", "*.svg"),
+                       ("JPEG", "*.jpg")])
+        if not path:
+            return
+        try:
+            self.fig.savefig(path, dpi=200, bbox_inches="tight")
+        except Exception as e:
+            messagebox.showerror("Save failed", str(e))
+            return
+        messagebox.showinfo("Saved", f"Plot saved to:\n{path}")
+
+    def _copy_plot(self):
+        """Copy current plot to the system clipboard as an image."""
+        idx, _ = self._get_selected_tracker()
+        if idx is None:
+            messagebox.showinfo("Info", "Select a completed video first.")
+            return
+
+        # Render figure to PNG bytes
+        buf = BytesIO()
+        try:
+            self.fig.savefig(buf, format="png", dpi=200, bbox_inches="tight")
+        except Exception as e:
+            messagebox.showerror("Copy failed", str(e))
+            return
+        buf.seek(0)
+
+        # Windows: copy CF_DIB to clipboard via pywin32 if available
+        try:
+            import win32clipboard
+            img = Image.open(buf).convert("RGB")
+            out = BytesIO()
+            img.save(out, "BMP")
+            dib = out.getvalue()[14:]  # strip 14-byte BMP file header
+            win32clipboard.OpenClipboard()
+            try:
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32clipboard.CF_DIB, dib)
+            finally:
+                win32clipboard.CloseClipboard()
+            return
+        except ImportError:
+            pass
+        except Exception as e:
+            messagebox.showerror("Copy failed", str(e))
+            return
+
+        # Fallback: write a temp PNG and tell the user where it is
+        tmp_dir = OUTPUT_DIR / "_clipboard_tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        tmp_path = tmp_dir / f"{self._plot_filename_stem()}.png"
+        with open(tmp_path, "wb") as f:
+            f.write(buf.getvalue())
+        messagebox.showinfo(
+            "Copy unavailable",
+            "Clipboard image copy requires pywin32 on Windows.\n"
+            "Install with:  pip install pywin32\n\n"
+            f"For now the image was saved to:\n{tmp_path}")
 
     # --------------------------------------------------------- Export
     def _write_csv(self, path, results, positions, tracker, opts):
